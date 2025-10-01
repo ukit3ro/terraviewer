@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, func
 from sqlalchemy.orm import sessionmaker
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -12,30 +12,49 @@ class LogSearch:
     
     def _setup_fts_table(self):
         """Создание виртуальной таблицы FTS5 для полнотекстового поиска"""
-        with self.engine.connect() as conn:
-            conn.execute(text("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS logs_fts 
-                USING fts5(id, level, message, tf_resource_type, timestamp)
-            """))
-            
-            conn.execute(text("""
-                INSERT OR IGNORE INTO logs_fts 
-                SELECT id, level, message, tf_resource_type, timestamp 
-                FROM terraform_logs
-            """))
-            conn.commit()
+        try:
+            with self.engine.connect() as conn:
+                conn.execute(text("""
+                    CREATE VIRTUAL TABLE IF NOT EXISTS logs_fts 
+                    USING fts5(id, level, message, tf_resource_type, timestamp)
+                """))
+                
+                conn.execute(text("""
+                    INSERT OR IGNORE INTO logs_fts 
+                    SELECT id, level, message, tf_resource_type, timestamp 
+                    FROM terraform_logs
+                """))
+                conn.commit()
+        except Exception as e:
+            print(f"Warning: FTS5 setup failed: {e}. Using fallback search.")
     
     def full_text_search(self, query: str, limit: int = 100) -> List[Dict[str, Any]]:
         """Полнотекстовый поиск с использованием FTS5"""
+        try:
+            with self.engine.connect() as conn:
+                result = conn.execute(text("""
+                    SELECT l.* 
+                    FROM logs_fts f
+                    JOIN terraform_logs l ON f.id = l.id
+                    WHERE logs_fts MATCH :query
+                    ORDER BY rank
+                    LIMIT :limit
+                """), {"query": query, "limit": limit})
+                
+                return [dict(row) for row in result.mappings()]
+        except Exception as e:
+            print(f"FTS search failed: {e}. Using fallback.")
+            return self.fallback_search(query, limit)
+    
+    def fallback_search(self, query: str, limit: int = 100) -> List[Dict[str, Any]]:
         with self.engine.connect() as conn:
+            search_query = f"%{query}%"
             result = conn.execute(text("""
-                SELECT l.* 
-                FROM logs_fts f
-                JOIN terraform_logs l ON f.id = l.id
-                WHERE logs_fts MATCH :query
-                ORDER BY rank
+                SELECT * FROM terraform_logs 
+                WHERE message LIKE :query OR raw_data LIKE :query
+                ORDER BY timestamp DESC 
                 LIMIT :limit
-            """), {"query": query, "limit": limit})
+            """), {"query": search_query, "limit": limit})
             
             return [dict(row) for row in result.mappings()]
     
@@ -48,7 +67,6 @@ class LogSearch:
         end_date: Optional[datetime] = None,
         limit: int = 100
     ) -> List[Dict[str, Any]]:
-        """Расширенный поиск с комбинированными фильтрами"""
         with self.engine.connect() as conn:
             sql = """
                 SELECT * FROM terraform_logs 
@@ -83,13 +101,21 @@ class LogSearch:
             return [dict(row) for row in result.mappings()]
     
     def get_resource_types(self) -> List[str]:
-        """Получение списка всех resource_types"""
         with self.engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT DISTINCT tf_resource_type 
                 FROM terraform_logs 
                 WHERE tf_resource_type IS NOT NULL 
                 ORDER BY tf_resource_type
+            """))
+            return [row[0] for row in result if row[0]]
+    
+    def get_levels(self) -> List[str]:
+        with self.engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT DISTINCT level 
+                FROM terraform_logs 
+                ORDER BY level
             """))
             return [row[0] for row in result if row[0]]
 

@@ -3,7 +3,6 @@ import re
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
-from .main import TerraformLog, LogCreate
 
 class TerraformLogParser:
     def __init__(self):
@@ -55,7 +54,6 @@ class TerraformLogParser:
         return None
 
     def detect_section(self, message: str) -> Optional[str]:
-        """Определение секции выполнения (plan/apply/validation)"""
         if self.plan_section_pattern.search(message):
             return 'plan'
         elif self.apply_section_pattern.search(message):
@@ -64,8 +62,7 @@ class TerraformLogParser:
             return 'validation'
         return None
 
-    def parse_single_log(self, log_data: Dict[str, Any]) -> LogCreate:
-        """Парсинг одной записи лога"""
+    def parse_single_log(self, log_data: Dict[str, Any]) -> Dict[str, Any]:
         level = log_data.get('@level')
         message = log_data.get('@message', '')
         timestamp_str = log_data.get('@timestamp')
@@ -87,19 +84,23 @@ class TerraformLogParser:
             if json_field in log_data:
                 json_blocks[json_field] = self.extract_json_blocks(log_data[json_field])
         
-        return LogCreate(
-            level=level,
-            message=message,
-            timestamp=timestamp,
-            module=module,
-            tf_req_id=tf_req_id,
-            tf_resource_type=tf_resource_type,
-            tf_rpc=tf_rpc,
-            raw_data=json.dumps(log_data)
-        )
+        return {
+            'level': level,
+            'message': message,
+            'timestamp': timestamp,
+            'module': module,
+            'tf_req_id': tf_req_id,
+            'tf_resource_type': tf_resource_type,
+            'tf_rpc': tf_rpc,
+            'section': section,
+            'json_blocks': json_blocks,
+            'raw_data': json.dumps(log_data)
+        }
 
     def parse_log_file(self, file_path: str, db: Session) -> Dict[str, Any]:
         """Парсинг файла с логами и сохранение в БД"""
+        from .models import TerraformLog
+        
         stats = {
             'total': 0,
             'parsed': 0,
@@ -109,6 +110,8 @@ class TerraformLogParser:
         
         try:
             with open(file_path, 'r', encoding='utf-8') as file:
+                db_logs = []
+                
                 for line_number, line in enumerate(file, 1):
                     line = line.strip()
                     if not line:
@@ -118,12 +121,21 @@ class TerraformLogParser:
                     
                     try:
                         log_data = json.loads(line)
-                        log_create = self.parse_single_log(log_data)
+                        parsed_log = self.parse_single_log(log_data)
                         
-                        db_log = TerraformLog(**log_create.dict())
-                        db.add(db_log)
+                        db_log = TerraformLog(
+                            level=parsed_log['level'],
+                            message=parsed_log['message'],
+                            timestamp=parsed_log['timestamp'],
+                            module=parsed_log['module'],
+                            tf_req_id=parsed_log['tf_req_id'],
+                            tf_resource_type=parsed_log['tf_resource_type'],
+                            tf_rpc=parsed_log['tf_rpc'],
+                            raw_data=parsed_log['raw_data']
+                        )
+                        db_logs.append(db_log)
                         
-                        section = self.detect_section(log_create.message)
+                        section = parsed_log['section']
                         if section and section in stats['sections']:
                             stats['sections'][section] += 1
                         
@@ -136,18 +148,24 @@ class TerraformLogParser:
                         print(f"Ошибка обработки строки {line_number}: {e}")
                         stats['errors'] += 1
                 
-                db.commit()
+                if db_logs:
+                    db.add_all(db_logs)
+                    db.commit()
                 
         except FileNotFoundError:
             print(f"Файл не найден: {file_path}")
+            stats['errors'] = stats['total']
         except Exception as e:
             print(f"Ошибка чтения файла: {e}")
             db.rollback()
+            stats['errors'] = stats['total']
         
         return stats
 
     def parse_logs_batch(self, logs_data: List[Dict[str, Any]], db: Session) -> Dict[str, Any]:
         """Пакетный парсинг логов из списка словарей"""
+        from .models import TerraformLog
+        
         stats = {
             'total': len(logs_data),
             'parsed': 0,
@@ -159,11 +177,21 @@ class TerraformLogParser:
         
         for log_data in logs_data:
             try:
-                log_create = self.parse_single_log(log_data)
-                db_log = TerraformLog(**log_create.dict())
+                parsed_log = self.parse_single_log(log_data)
+                db_log = TerraformLog(
+                    level=parsed_log['level'],
+                    message=parsed_log['message'],
+                    timestamp=parsed_log['timestamp'],
+                    module=parsed_log['module'],
+                    tf_req_id=parsed_log['tf_req_id'],
+                    tf_resource_type=parsed_log['tf_resource_type'],
+                    tf_rpc=parsed_log['tf_rpc'],
+                    raw_data=parsed_log['raw_data']
+                )
                 db_logs.append(db_log)
                 
-                section = self.detect_section(log_create.message)
+                #обновление статистики секций
+                section = parsed_log['section']
                 if section and section in stats['sections']:
                     stats['sections'][section] += 1
                 
@@ -205,18 +233,23 @@ class TerraformLogParser:
                         log_data = json.loads(line)
                         analysis['valid_json'] += 1
                         
+                        #анализ полей
                         analysis['common_fields'].update(log_data.keys())
                         
+                        #уровни логированя
                         level = log_data.get('@level', 'unknown')
                         analysis['levels'][level] = analysis['levels'].get(level, 0) + 1
                         
+                        #модули
                         module = log_data.get('@module', 'unknown')
                         analysis['modules'][module] = analysis['modules'].get(module, 0) + 1
                         
+                        #типы ресурсов
                         resource_type = log_data.get('tf_resource_type')
                         if resource_type:
                             analysis['resource_types'][resource_type] = analysis['resource_types'].get(resource_type, 0) + 1
                         
+                        #rpc типы
                         rpc_type = log_data.get('tf_rpc')
                         if rpc_type:
                             analysis['rpc_types'][rpc_type] = analysis['rpc_types'].get(rpc_type, 0) + 1

@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TerraViewer - Анализатор логов Terraform</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <header class="header">
+            <h1>🚀 TerraViewer</h1>
+            <p>Анализатор логов Terraform в реальном времени</p>
+        </header>
+
+        <div class="controls">
+            <div class="upload-section">
+                <input type="file" id="logFile" accept=".json,.log,.txt" style="display: none;">
+                <button id="uploadBtn" class="btn btn-primary">📁 Загрузить логи</button>
+                <span id="fileName" class="file-name"></span>
+            </div>
+            
+            <div class="search-section">
+                <input type="text" id="searchInput" placeholder="🔍 Поиск по логам..." class="search-input">
+                <select id="levelFilter" class="filter-select">
+                    <option value="">Все уровни</option>
+                    <option value="error">Error</option>
+                    <option value="warn">Warning</option>
+                    <option value="info">Info</option>
+                    <option value="debug">Debug</option>
+                    <option value="trace">Trace</option>
+                </select>
+                <button id="refreshBtn" class="btn btn-secondary">🔄 Обновить</button>
+            </div>
+        </div>
+
+        <div id="stats" class="stats">
+            <div class="stat-item">
+                <span class="stat-label">Всего логов:</span>
+                <span id="totalLogs" class="stat-value">0</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Не прочитано:</span>
+                <span id="unreadLogs" class="stat-value">0</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Уровни:</span>
+                <span id="levelStats" class="stat-value">-</span>
+            </div>
+        </div>
+
+        <div id="logsContainer" class="logs-container">
+            <div id="loading" class="loading" style="display: none;">
+                <div class="spinner"></div>
+                <p>Загрузка логов...</p>
+            </div>
+            
+            <div id="emptyState" class="empty-state">
+                <h3>📝 Логов пока нет</h3>
+                <p>Загрузите файл с логами Terraform чтобы начать анализ</p>
+            </div>
+
+            <div id="logsList" class="logs-list" style="display: none;"></div>
+        </div>
+
+        <div id="chainsModal" class="modal">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <h3>Цепочка запросов</h3>
+                <div id="chainsList" class="chains-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
