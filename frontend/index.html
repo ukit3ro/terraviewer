@@ -8,11 +8,13 @@
 </head>
 <body>
     <div id="app">
+        <!-- Header -->
         <header class="header">
             <h1>🚀 TerraViewer</h1>
             <p>Анализатор логов Terraform в реальном времени</p>
         </header>
 
+        <!-- Controls -->
         <div class="controls">
             <div class="upload-section">
                 <input type="file" id="logFile" accept=".json,.log,.txt" style="display: none;">
@@ -31,9 +33,47 @@
                     <option value="trace">Trace</option>
                 </select>
                 <button id="refreshBtn" class="btn btn-secondary">🔄 Обновить</button>
+                <button id="advancedSearchBtn" class="btn btn-success">🎯 Расширенный поиск</button>
+            </div>
+        </div>
+        
+        <div id="advancedSearchPanel" class="advanced-search-panel" style="display: none;">
+            <div class="search-fields">
+                <div class="search-field">
+                    <label for="resourceTypeFilter">Тип ресурса:</label>
+                    <input type="text" id="resourceTypeFilter" class="search-input" placeholder="t1_compute_instance">
+                </div>
+                <div class="search-field">
+                    <label for="advancedLevelFilter">Уровень:</label>
+                    <select id="advancedLevelFilter" class="filter-select">
+                        <option value="">Все уровни</option>
+                        <option value="error">Error</option>
+                        <option value="warn">Warning</option>
+                        <option value="info">Info</option>
+                        <option value="debug">Debug</option>
+                        <option value="trace">Trace</option>
+                    </select>
+                </div>
+                <div class="search-field">
+                    <label for="startDateFilter">С:</label>
+                    <input type="datetime-local" id="startDateFilter" class="date-input">
+                </div>
+                <div class="search-field">
+                    <label for="endDateFilter">По:</label>
+                    <input type="datetime-local" id="endDateFilter" class="date-input">
+                </div>
+                <div class="search-field">
+                    <label for="advancedSearchInput">Текст поиска:</label>
+                    <input type="text" id="advancedSearchInput" class="search-input" placeholder="Дополнительный текст...">
+                </div>
+            </div>
+            <div class="search-actions">
+                <button id="clearAdvancedSearch" class="btn btn-secondary">❌ Очистить</button>
+                <button id="applyAdvancedSearch" class="btn btn-primary">🔍 Применить поиск</button>
             </div>
         </div>
 
+        <!-- Stats -->
         <div id="stats" class="stats">
             <div class="stat-item">
                 <span class="stat-label">Всего логов:</span>
@@ -49,6 +89,7 @@
             </div>
         </div>
 
+        <!-- Logs Container -->
         <div id="logsContainer" class="logs-container">
             <div id="loading" class="loading" style="display: none;">
                 <div class="spinner"></div>
@@ -63,6 +104,7 @@
             <div id="logsList" class="logs-list" style="display: none;"></div>
         </div>
 
+        <!-- Request Chains Modal -->
         <div id="chainsModal" class="modal">
             <div class="modal-content">
                 <span class="close">&times;</span>

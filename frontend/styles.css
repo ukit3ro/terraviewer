@@ -1,4 +1,3 @@
-/* Base Styles */
 * {
     margin: 0;
     padding: 0;
@@ -13,14 +12,13 @@ body {
 }
 
 #app {
-    max-width: 1200px;
+    max-width: 1400px;
     margin: 0 auto;
     background: white;
     min-height: 100vh;
     box-shadow: 0 0 20px rgba(0,0,0,0.1);
 }
 
-/* Header */
 .header {
     background: linear-gradient(135deg, #2c3e50, #34495e);
     color: white;
@@ -38,7 +36,6 @@ body {
     font-size: 1.1rem;
 }
 
-/* Controls */
 .controls {
     display: flex;
     justify-content: space-between;
@@ -50,7 +47,7 @@ body {
     gap: 1rem;
 }
 
-.upload-section, .search-section {
+.upload-section, .search-section, .advanced-search-section {
     display: flex;
     align-items: center;
     gap: 1rem;
@@ -91,36 +88,27 @@ body {
     transform: translateY(-2px);
 }
 
-.btn-danger {
-    background: #dc3545;
+.btn-success {
+    background: #28a745;
     color: white;
 }
 
-.btn-danger:hover {
-    background: #c82333;
+.btn-success:hover {
+    background: #218838;
 }
 
-.search-input {
+.search-input, .filter-select, .date-input {
     padding: 0.75rem;
     border: 2px solid #e9ecef;
     border-radius: 8px;
     font-size: 0.9rem;
-    min-width: 250px;
+    min-width: 200px;
     transition: border-color 0.3s ease;
 }
 
-.search-input:focus {
+.search-input:focus, .filter-select:focus, .date-input:focus {
     outline: none;
     border-color: #007bff;
-}
-
-.filter-select {
-    padding: 0.75rem;
-    border: 2px solid #e9ecef;
-    border-radius: 8px;
-    font-size: 0.9rem;
-    background: white;
-    cursor: pointer;
 }
 
 .file-name {
@@ -128,7 +116,6 @@ body {
     font-style: italic;
 }
 
-/* Stats */
 .stats {
     display: flex;
     justify-content: space-around;
@@ -157,7 +144,6 @@ body {
     color: #2c3e50;
 }
 
-/* Logs Container */
 .logs-container {
     padding: 1rem;
     min-height: 400px;
@@ -195,7 +181,6 @@ body {
     font-size: 1.5rem;
 }
 
-/* Log Items */
 .logs-list {
     display: flex;
     flex-direction: column;
@@ -225,6 +210,20 @@ body {
     opacity: 0.7;
 }
 
+.log-item.chain-start {
+    border-left: 4px solid #28a745;
+}
+
+.log-item.chain-middle {
+    border-left: 4px solid #ffc107;
+    margin-left: 1rem;
+}
+
+.log-item.chain-end {
+    border-left: 4px solid #dc3545;
+    margin-left: 1rem;
+}
+
 .log-header {
     display: flex;
     justify-content: space-between;
@@ -242,20 +241,22 @@ body {
     text-transform: uppercase;
 }
 
-.log-level.error { background: #f8d7da; color: #721c24; }
-.log-level.warn { background: #fff3cd; color: #856404; }
-.log-level.info { background: #d1ecf1; color: #0c5460; }
-.log-level.debug { background: #d1d1d1; color: #383d41; }
-.log-level.trace { background: #e2e3e5; color: #383d41; }
+.log-level.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+.log-level.warn { background: #fff3cd; color: #856404; border: 1px solid #ffeaa7; }
+.log-level.info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+.log-level.debug { background: #d1d1d1; color: #383d41; border: 1px solid #c6c8ca; }
+.log-level.trace { background: #e2e3e5; color: #383d41; border: 1px solid #d6d8db; }
 
 .log-timestamp {
     color: #6c757d;
     font-size: 0.8rem;
+    font-family: 'Courier New', monospace;
 }
 
 .log-message {
     margin-bottom: 0.5rem;
     line-height: 1.4;
+    word-break: break-word;
 }
 
 .log-details {
@@ -270,6 +271,9 @@ body {
     display: flex;
     align-items: center;
     gap: 0.25rem;
+    background: #f8f9fa;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
 }
 
 .log-actions {
@@ -293,16 +297,16 @@ body {
     background: #e9ecef;
 }
 
-/* Request Chains */
 .chain-group {
     margin-bottom: 1rem;
-    border: 1px solid #dee2e6;
+    border: 2px solid #007bff;
     border-radius: 8px;
     overflow: hidden;
 }
 
 .chain-header {
-    background: #f8f9fa;
+    background: linear-gradient(135deg, #007bff, #0056b3);
+    color: white;
     padding: 1rem;
     cursor: pointer;
     display: flex;
@@ -313,14 +317,27 @@ body {
 
 .chain-logs {
     display: none;
-    padding: 0;
+    padding: 0.5rem;
+    background: #f8f9fa;
 }
 
 .chain-group.expanded .chain-logs {
     display: block;
 }
 
-/* Modal */
+.chain-info {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.9rem;
+}
+
+.chain-badge {
+    background: rgba(255,255,255,0.2);
+    padding: 0.25rem 0.5rem;
+    border-radius: 12px;
+    font-size: 0.8rem;
+}
+
 .modal {
     display: none;
     position: fixed;
@@ -338,7 +355,7 @@ body {
     padding: 2rem;
     border-radius: 12px;
     width: 90%;
-    max-width: 800px;
+    max-width: 1000px;
     max-height: 80vh;
     overflow-y: auto;
     position: relative;
@@ -359,19 +376,88 @@ body {
     color: black;
 }
 
-/* Responsive */
+.advanced-search-panel {
+    background: #f8f9fa;
+    padding: 1.5rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    border: 1px solid #dee2e6;
+}
+
+.search-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.search-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.search-field label {
+    font-weight: 600;
+    color: #495057;
+    font-size: 0.9rem;
+}
+
+.search-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: flex-end;
+}
+
+.tabs {
+    display: flex;
+    border-bottom: 1px solid #dee2e6;
+    margin-bottom: 1rem;
+}
+
+.tab {
+    padding: 1rem 1.5rem;
+    cursor: pointer;
+    border: none;
+    background: none;
+    font-weight: 600;
+    color: #6c757d;
+    border-bottom: 3px solid transparent;
+    transition: all 0.3s ease;
+}
+
+.tab.active {
+    color: #007bff;
+    border-bottom-color: #007bff;
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.time-difference {
+    font-size: 0.7rem;
+    color: #6c757d;
+    margin-left: 0.5rem;
+    font-family: 'Courier New', monospace;
+}
+
 @media (max-width: 768px) {
     .controls {
         flex-direction: column;
         align-items: stretch;
     }
     
-    .upload-section, .search-section {
+    .upload-section, .search-section, .advanced-search-section {
         justify-content: center;
     }
     
-    .search-input {
-        min-width: 200px;
+    .search-fields {
+        grid-template-columns: 1fr;
     }
     
     .stats {
@@ -387,5 +473,15 @@ body {
     .modal-content {
         width: 95%;
         margin: 10% auto;
+    }
+    
+    .tabs {
+        flex-wrap: wrap;
+    }
+    
+    .tab {
+        flex: 1;
+        min-width: 120px;
+        text-align: center;
     }
 }
