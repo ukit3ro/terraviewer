@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends, Query, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Boolean, func
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Boolean, JSON, func
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from pydantic import BaseModel
@@ -9,6 +9,7 @@ from typing import Optional, List, Dict, Any
 import json
 import os
 import uuid
+import re
 
 SQLITE_DATABASE_URL = "sqlite:///./data/terraform_logs.db"
 engine = create_engine(SQLITE_DATABASE_URL, connect_args={"check_same_thread": False})
@@ -26,7 +27,9 @@ class TerraformLog(Base):
     tf_req_id = Column(String, index=True, nullable=True)
     tf_resource_type = Column(String, index=True, nullable=True)
     tf_rpc = Column(String, nullable=True)
-    raw_data = Column(Text)  # Исходный JSON
+    raw_data = Column(Text)
+    section = Column(String, index=True, nullable=True)
+    json_blocks = Column(JSON, nullable=True)
     is_read = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -39,6 +42,8 @@ class LogCreate(BaseModel):
     tf_resource_type: Optional[str] = None
     tf_rpc: Optional[str] = None
     raw_data: Optional[str] = None
+    section: Optional[str] = None
+    json_blocks: Optional[Dict[str, Any]] = None
 
 class LogResponse(BaseModel):
     id: int
@@ -49,22 +54,13 @@ class LogResponse(BaseModel):
     tf_req_id: Optional[str] = None
     tf_resource_type: Optional[str] = None
     tf_rpc: Optional[str] = None
+    section: Optional[str] = None
+    json_blocks: Optional[Dict[str, Any]] = None
     is_read: bool
     created_at: datetime
 
     class Config:
         from_attributes = True
-
-class LogListResponse(BaseModel):
-    logs: List[LogResponse]
-    total: int
-    page: int
-    page_size: int
-
-class ChainResponse(BaseModel):
-    tf_req_id: str
-    logs: List[LogResponse]
-    total_logs: int
 
 Base.metadata.create_all(bind=engine)
 
@@ -93,6 +89,10 @@ class SimpleTerraformParser:
             'debug': ['debug', 'trace'],
             'info': ['info', 'message', 'starting', 'completed']
         }
+        
+        self.plan_section_pattern = re.compile(r'starting Plan operation', re.IGNORECASE)
+        self.apply_section_pattern = re.compile(r'starting Apply operation', re.IGNORECASE)
+        self.validation_section_pattern = re.compile(r'running validation operation', re.IGNORECASE)
     
     def detect_level_heuristic(self, message: str) -> str:
         message_lower = message.lower()
@@ -112,6 +112,28 @@ class SimpleTerraformParser:
         except (ValueError, TypeError):
             return datetime.utcnow()
     
+    def detect_section(self, message: str) -> Optional[str]:
+        if self.plan_section_pattern.search(message):
+            return 'plan'
+        elif self.apply_section_pattern.search(message):
+            return 'apply'
+        elif self.validation_section_pattern.search(message):
+            return 'validation'
+        return None
+    
+    def extract_json_blocks(self, field_value: str) -> Optional[Dict[str, Any]]:
+        if not field_value or not isinstance(field_value, str):
+            return None
+        
+        json_match = re.search(r'(\{.*\}|\[.*\])', field_value, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group(1))
+            except json.JSONDecodeError:
+                pass
+        
+        return None
+    
     def parse_single_log(self, log_data: dict) -> LogCreate:
         level = log_data.get('@level')
         message = log_data.get('@message', '')
@@ -122,6 +144,13 @@ class SimpleTerraformParser:
         
         timestamp = self.parse_timestamp(timestamp_str) if timestamp_str else datetime.utcnow()
         
+        section = self.detect_section(message)
+        
+        json_blocks = {}
+        for json_field in ['tf_http_req_body', 'tf_http_res_body']:
+            if json_field in log_data:
+                json_blocks[json_field] = self.extract_json_blocks(log_data[json_field])
+        
         return LogCreate(
             level=level,
             message=message,
@@ -130,6 +159,8 @@ class SimpleTerraformParser:
             tf_req_id=log_data.get('tf_req_id'),
             tf_resource_type=log_data.get('tf_resource_type'),
             tf_rpc=log_data.get('tf_rpc'),
+            section=section,
+            json_blocks=json_blocks,
             raw_data=json.dumps(log_data)
         )
 
@@ -161,6 +192,10 @@ def process_log_file(file_path: str, db: Session):
                     db.add(db_log)
                     stats['parsed'] += 1
                     
+                    section = log_create.section
+                    if section and section in stats['sections']:
+                        stats['sections'][section] += 1
+                    
                 except json.JSONDecodeError as e:
                     print(f"JSON decode error on line {line_number}: {e}")
                     stats['errors'] += 1
@@ -189,28 +224,13 @@ os.makedirs("./data/uploads", exist_ok=True)
 async def root():
     return {"message": "TerraViewer API", "version": "1.0.0"}
 
-@app.post("/api/logs", response_model=LogResponse)
-async def create_log(log: LogCreate, db: Session = Depends(get_db)):
-    db_log = TerraformLog(**log.dict())
-    db.add(db_log)
-    db.commit()
-    db.refresh(db_log)
-    return db_log
-
-@app.post("/api/logs/batch")
-async def create_logs_batch(logs: List[LogCreate], db: Session = Depends(get_db)):
-    """Пакетная загрузка логов"""
-    db_logs = [TerraformLog(**log.dict()) for log in logs]
-    db.add_all(db_logs)
-    db.commit()
-    return {"message": f"Successfully added {len(db_logs)} logs"}
-
-@app.get("/api/logs", response_model=LogListResponse)
+@app.get("/api/logs", response_model=List[LogResponse])
 async def get_logs(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     level: Optional[str] = Query(None),
     tf_resource_type: Optional[str] = Query(None),
+    section: Optional[str] = Query(None),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     unread_only: bool = Query(False),
@@ -222,6 +242,8 @@ async def get_logs(
         query = query.filter(TerraformLog.level == level)
     if tf_resource_type:
         query = query.filter(TerraformLog.tf_resource_type == tf_resource_type)
+    if section:
+        query = query.filter(TerraformLog.section == section)
     if start_date:
         query = query.filter(TerraformLog.timestamp >= start_date)
     if end_date:
@@ -229,16 +251,38 @@ async def get_logs(
     if unread_only:
         query = query.filter(TerraformLog.is_read == False)
     
-    total = query.count()
-    
     logs = query.order_by(TerraformLog.timestamp.desc()).offset(skip).limit(limit).all()
     
-    return LogListResponse(
-        logs=logs,
-        total=total,
-        page=skip // limit + 1,
-        page_size=limit
-    )
+    return logs
+
+@app.get("/api/sections")
+async def get_sections(db: Session = Depends(get_db)):
+    sections = db.query(TerraformLog.section).filter(
+        TerraformLog.section.isnot(None)
+    ).distinct().all()
+    return [section[0] for section in sections]
+
+@app.get("/api/stats")
+async def get_stats(db: Session = Depends(get_db)):
+    total_logs = db.query(TerraformLog).count()
+    unread_logs = db.query(TerraformLog).filter(TerraformLog.is_read == False).count()
+    
+    level_stats = db.query(
+        TerraformLog.level,
+        func.count(TerraformLog.id)
+    ).group_by(TerraformLog.level).all()
+    
+    section_stats = db.query(
+        TerraformLog.section,
+        func.count(TerraformLog.id)
+    ).filter(TerraformLog.section.isnot(None)).group_by(TerraformLog.section).all()
+    
+    return {
+        "total_logs": total_logs,
+        "unread_logs": unread_logs,
+        "level_stats": dict(level_stats),
+        "section_stats": dict(section_stats)
+    }
 
 @app.get("/api/logs/{log_id}", response_model=LogResponse)
 async def get_log(log_id: int, db: Session = Depends(get_db)):
@@ -264,7 +308,6 @@ async def search_logs(
     limit: int = Query(100, ge=1, le=1000),
     db: Session = Depends(get_db)
 ):
-
     search_query = f"%{q}%"
     
     query = db.query(TerraformLog).filter(
@@ -283,7 +326,7 @@ async def search_logs(
         "page_size": limit
     }
 
-@app.get("/api/chains/{tf_req_id}", response_model=ChainResponse)
+@app.get("/api/chains/{tf_req_id}")
 async def get_request_chain(tf_req_id: str, db: Session = Depends(get_db)):
     logs = db.query(TerraformLog).filter(
         TerraformLog.tf_req_id == tf_req_id
@@ -292,34 +335,10 @@ async def get_request_chain(tf_req_id: str, db: Session = Depends(get_db)):
     if not logs:
         raise HTTPException(status_code=404, detail="Request chain not found")
     
-    return ChainResponse(
-        tf_req_id=tf_req_id,
-        logs=logs,
-        total_logs=len(logs)
-    )
-
-@app.get("/api/stats")
-async def get_stats(db: Session = Depends(get_db)):
-    total_logs = db.query(TerraformLog).count()
-    unread_logs = db.query(TerraformLog).filter(TerraformLog.is_read == False).count()
-    
-    level_stats = db.query(
-        TerraformLog.level,
-        func.count(TerraformLog.id)
-    ).group_by(TerraformLog.level).all()
-    
-    resource_stats = db.query(
-        TerraformLog.tf_resource_type,
-        func.count(TerraformLog.id)
-    ).filter(TerraformLog.tf_resource_type.isnot(None)).group_by(
-        TerraformLog.tf_resource_type
-    ).order_by(func.count(TerraformLog.id).desc()).limit(10).all()
-    
     return {
-        "total_logs": total_logs,
-        "unread_logs": unread_logs,
-        "level_stats": dict(level_stats),
-        "top_resources": dict(resource_stats)
+        "tf_req_id": tf_req_id,
+        "logs": logs,
+        "total_logs": len(logs)
     }
 
 @app.post("/api/upload-logs")
@@ -352,106 +371,6 @@ async def upload_logs_file(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
-
-@app.post("/api/parse-logs")
-async def parse_logs_directly(
-    logs: List[Dict[str, Any]],
-    db: Session = Depends(get_db)
-):
-    stats = {
-        'total': len(logs),
-        'parsed': 0,
-        'errors': 0,
-        'sections': {'plan': 0, 'apply': 0, 'validation': 0}
-    }
-    
-    db_logs = []
-    
-    for log_data in logs:
-        try:
-            log_create = parser.parse_single_log(log_data)
-            db_log = TerraformLog(**log_create.dict())
-            db_logs.append(db_log)
-            stats['parsed'] += 1
-            
-        except Exception as e:
-            print(f"Error parsing log: {e}")
-            stats['errors'] += 1
-    
-    if db_logs:
-        db.add_all(db_logs)
-        db.commit()
-    
-    return {"message": "Logs parsed successfully", "stats": stats}
-
-@app.get("/api/analyze-logs/{filename}")
-async def analyze_logs_structure(filename: str):
-    """Анализ структуры логов без сохранения в БД"""
-    file_path = f"./data/uploads/{filename}"
-    
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
-    
-    analysis = {
-        'total_lines': 0,
-        'valid_json': 0,
-        'levels': {},
-        'modules': {},
-        'timestamp_format_ok': 0
-    }
-    
-    try:
-        with open(file_path, 'r', encoding='utf-8') as file:
-            for line in file:
-                line = line.strip()
-                if not line:
-                    continue
-                
-                analysis['total_lines'] += 1
-                
-                try:
-                    log_data = json.loads(line)
-                    analysis['valid_json'] += 1
-                    
-                    level = log_data.get('@level', 'unknown')
-                    analysis['levels'][level] = analysis['levels'].get(level, 0) + 1
-                    
-                    module = log_data.get('@module', 'unknown')
-                    analysis['modules'][module] = analysis['modules'].get(module, 0) + 1
-                    
-                    timestamp = log_data.get('@timestamp')
-                    if timestamp and parser.parse_timestamp(timestamp):
-                        analysis['timestamp_format_ok'] += 1
-                        
-                except json.JSONDecodeError:
-                    continue
-        
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="File not found")
-    
-    return analysis
-
-@app.get("/api/parser-stats")
-async def get_parser_stats(db: Session = Depends(get_db)):
-    total_logs = db.query(TerraformLog).count()
-    
-    level_stats = db.query(
-        TerraformLog.level,
-        func.count(TerraformLog.id)
-    ).group_by(TerraformLog.level).all()
-    
-    resource_stats = db.query(
-        TerraformLog.tf_resource_type,
-        func.count(TerraformLog.id)
-    ).filter(TerraformLog.tf_resource_type.isnot(None)).group_by(
-        TerraformLog.tf_resource_type
-    ).order_by(func.count(TerraformLog.id).desc()).limit(10).all()
-    
-    return {
-        "total_parsed_logs": total_logs,
-        "level_distribution": dict(level_stats),
-        "top_resource_types": dict(resource_stats)
-    }
 
 if __name__ == "__main__":
     import uvicorn

@@ -16,26 +16,7 @@ class TerraformLog(Base):
     tf_resource_type = Column(String, index=True, nullable=True)
     tf_rpc = Column(String, nullable=True)
     raw_data = Column(Text)
+    section = Column(String, index=True, nullable=True)
+    json_blocks = Column(JSON, nullable=True)
     is_read = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-class LogAnalysis(Base):
-    __tablename__ = "log_analysis" # модель для хранения результатов анализа логов
-    
-    id = Column(Integer, primary_key=True, index=True)
-    file_name = Column(String, index=True)
-    analysis_data = Column(JSON)
-    total_logs = Column(Integer)
-    parsed_logs = Column(Integer)
-    error_logs = Column(Integer)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-class LogSection(Base):
-    __tablename__ = "log_sections" # модель для отслеживания секций выполнения
-    
-    id = Column(Integer, primary_key=True, index=True)
-    section_type = Column(String, index=True)
-    start_log_id = Column(Integer)
-    end_log_id = Column(Integer)
-    log_count = Column(Integer)
     created_at = Column(DateTime, default=datetime.utcnow)

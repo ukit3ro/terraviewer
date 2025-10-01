@@ -4,6 +4,9 @@ class TerraViewer {
         this.currentLogs = [];
         this.requestChains = new Map();
         this.lastTimestamp = null;
+        this.currentChainIndex = 0;
+        this.currentChainId = null;
+        this.jsonExpandedState = new Map();
         
         this.initializeEventListeners();
         this.loadInitialStats();
@@ -26,8 +29,13 @@ class TerraViewer {
             this.filterLogs();
         });
 
+        document.getElementById('sectionFilter').addEventListener('change', (e) => {
+            this.filterLogs();
+        });
+
         document.getElementById('refreshBtn').addEventListener('click', () => {
             this.loadLogs();
+            this.loadStats();
         });
 
         document.getElementById('advancedSearchBtn').addEventListener('click', () => {
@@ -42,18 +50,30 @@ class TerraViewer {
             this.clearAdvancedSearch();
         });
 
-        document.querySelectorAll('.tab').forEach(tab => {
-            tab.addEventListener('click', (e) => {
-                this.switchTab(e.target.dataset.tab);
+        document.addEventListener('click', (e) => {
+            if (e.target.classList.contains('quick-error-search')) {
+                this.searchLogs('error');
+                document.getElementById('levelFilter').value = 'error';
+            }
+            
+            if (e.target.classList.contains('quick-warn-search')) {
+                this.searchLogs('warn');
+                document.getElementById('levelFilter').value = 'warn';
+            }
+            
+            if (e.target.classList.contains('show-unread')) {
+                this.loadLogs(true);
+            }
+        });
+
+        document.querySelectorAll('.close').forEach(closeBtn => {
+            closeBtn.addEventListener('click', () => {
+                this.closeModal();
             });
         });
 
-        document.querySelector('.close').addEventListener('click', () => {
-            this.closeModal();
-        });
-
         window.addEventListener('click', (e) => {
-            if (e.target === document.getElementById('chainsModal')) {
+            if (e.target.classList.contains('modal')) {
                 this.closeModal();
             }
         });
@@ -62,24 +82,21 @@ class TerraViewer {
             if (e.key === 'Escape') {
                 this.closeModal();
             }
+            
+            if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+                if (e.key === 'ArrowLeft' && this.currentChainId) {
+                    this.navigateChain(-1);
+                }
+                if (e.key === 'ArrowRight' && this.currentChainId) {
+                    this.navigateChain(1);
+                }
+            }
         });
     }
 
     debounce(func, wait) {
         clearTimeout(this.debounceTimer);
         this.debounceTimer = setTimeout(func, wait);
-    }
-
-    switchTab(tabName) {
-        document.querySelectorAll('.tab').forEach(tab => {
-            tab.classList.remove('active');
-        });
-        document.querySelectorAll('.tab-content').forEach(content => {
-            content.classList.remove('active');
-        });
-
-        document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
-        document.getElementById(`${tabName}Tab`).classList.add('active');
     }
 
     toggleAdvancedSearch() {
@@ -92,6 +109,7 @@ class TerraViewer {
         const startDate = document.getElementById('startDateFilter').value;
         const endDate = document.getElementById('endDateFilter').value;
         const level = document.getElementById('advancedLevelFilter').value;
+        const section = document.getElementById('advancedSectionFilter').value;
         const searchQuery = document.getElementById('advancedSearchInput').value;
 
         let url = `${this.API_BASE}/logs?limit=500`;
@@ -99,6 +117,7 @@ class TerraViewer {
 
         if (resourceType) params.push(`tf_resource_type=${encodeURIComponent(resourceType)}`);
         if (level) params.push(`level=${encodeURIComponent(level)}`);
+        if (section) params.push(`section=${encodeURIComponent(section)}`);
         if (startDate) params.push(`start_date=${encodeURIComponent(startDate)}`);
         if (endDate) params.push(`end_date=${encodeURIComponent(endDate)}`);
 
@@ -115,13 +134,13 @@ class TerraViewer {
             const data = await response.json();
             
             if (searchQuery) {
-                const filteredLogs = data.logs.filter(log => 
+                const filteredLogs = data.filter(log => 
                     log.message.toLowerCase().includes(searchQuery.toLowerCase()) ||
                     (log.raw_data && log.raw_data.toLowerCase().includes(searchQuery.toLowerCase()))
                 );
                 this.displayLogs(filteredLogs);
             } else {
-                this.displayLogs(data.logs);
+                this.displayLogs(data);
             }
             
             this.hideLoading();
@@ -138,6 +157,7 @@ class TerraViewer {
         document.getElementById('startDateFilter').value = '';
         document.getElementById('endDateFilter').value = '';
         document.getElementById('advancedLevelFilter').value = '';
+        document.getElementById('advancedSectionFilter').value = '';
         document.getElementById('advancedSearchInput').value = '';
         this.loadLogs();
     }
@@ -173,18 +193,25 @@ class TerraViewer {
         }
     }
 
-    async loadLogs() {
+    async loadLogs(unreadOnly = false) {
         this.showLoading();
         this.lastTimestamp = null;
         
         try {
             const searchQuery = document.getElementById('searchInput').value;
             const levelFilter = document.getElementById('levelFilter').value;
+            const sectionFilter = document.getElementById('sectionFilter').value;
             
             let url = `${this.API_BASE}/logs?limit=500`;
             
             if (levelFilter) {
                 url += `&level=${levelFilter}`;
+            }
+            if (sectionFilter) {
+                url += `&section=${sectionFilter}`;
+            }
+            if (unreadOnly) {
+                url += `&unread_only=true`;
             }
 
             const response = await fetch(url);
@@ -192,7 +219,7 @@ class TerraViewer {
             if (!response.ok) throw new Error('Network response was not ok');
             
             const data = await response.json();
-            this.currentLogs = data.logs;
+            this.currentLogs = data;
             
             this.displayLogs(this.currentLogs);
             this.hideLoading();
@@ -213,7 +240,7 @@ class TerraViewer {
         this.showLoading();
 
         try {
-            const response = await fetch(`${this.API_BASE}/search?q=${encodeURIComponent(query)}&limit=200`);
+            const response = await fetch(`${this.API_BASE}/search?q=${encodeURIComponent(query)}&limit=500`);
             
             if (!response.ok) throw new Error('Network response was not ok');
             
@@ -230,6 +257,7 @@ class TerraViewer {
 
     filterLogs() {
         const levelFilter = document.getElementById('levelFilter').value;
+        const sectionFilter = document.getElementById('sectionFilter').value;
         const searchQuery = document.getElementById('searchInput').value;
 
         if (searchQuery) {
@@ -254,10 +282,31 @@ class TerraViewer {
 
         this.groupLogsByRequestId(logs);
         
-        const logsHTML = this.generateLogsHTML(logs);
+        const quickSearchHTML = this.generateQuickSearchHTML(logs);
+        const logsHTML = quickSearchHTML + this.generateLogsHTML(logs);
         logsList.innerHTML = logsHTML;
 
         this.attachLogActionsHandlers();
+    }
+
+    generateQuickSearchHTML(logs) {
+        const errorCount = logs.filter(log => log.level === 'error').length;
+        const warnCount = logs.filter(log => log.level === 'warn').length;
+        const unreadCount = logs.filter(log => !log.is_read).length;
+
+        return `
+            <div class="quick-search">
+                <button class="quick-search-btn quick-error-search" title="Быстрый поиск ошибок">
+                    🔴 Ошибки (${errorCount})
+                </button>
+                <button class="quick-search-btn quick-warn-search" title="Быстрый поиск предупреждений">
+                    🟡 Предупреждения (${warnCount})
+                </button>
+                <button class="quick-search-btn show-unread" title="Показать непрочитанные">
+                    📌 Непрочитанные (${unreadCount})
+                </button>
+            </div>
+        `;
     }
 
     groupLogsByRequestId(logs) {
@@ -358,6 +407,15 @@ class TerraViewer {
             else cssClass += ' chain-middle';
         }
 
+        const sectionBadge = log.section ? `
+            <span class="log-detail-item section-badge section-${log.section}">
+                🏗️ ${log.section}
+            </span>
+        ` : '';
+
+        const hasJson = log.json_blocks && Object.keys(log.json_blocks).length > 0;
+        const jsonPreview = hasJson ? this.generateJsonPreview(log.json_blocks) : '';
+
         return `
             <div class="${cssClass}" data-log-id="${log.id}">
                 <div class="log-header">
@@ -366,82 +424,161 @@ class TerraViewer {
                         <span class="log-timestamp">${timestamp}</span>
                     </div>
                     <div class="log-actions">
-                        ${log.tf_req_id && type !== 'chain' ? 
-                            `<button class="action-btn view-chain" data-req-id="${log.tf_req_id}">
+                        ${hasJson ? `
+                            <button class="action-btn toggle-json" data-log-id="${log.id}">
+                                📄 JSON
+                            </button>
+                        ` : ''}
+                        ${log.tf_req_id && type !== 'chain' ? `
+                            <button class="action-btn view-chain" data-req-id="${log.tf_req_id}">
                                 🔗 Цепочка
-                            </button>` : ''
-                        }
-                        ${!log.is_read ? 
-                            `<button class="action-btn mark-read" data-log-id="${log.id}">
+                            </button>
+                        ` : ''}
+                        ${!log.is_read ? `
+                            <button class="action-btn mark-read" data-log-id="${log.id}">
                                 ✅ Прочитано
-                            </button>` : ''
-                        }
+                            </button>
+                        ` : ''}
                     </div>
                 </div>
                 <div class="log-message">${this.escapeHtml(log.message)}</div>
                 <div class="log-details">
-                    ${log.tf_resource_type ? 
-                        `<span class="log-detail-item">
+                    ${sectionBadge}
+                    ${log.tf_resource_type ? `
+                        <span class="log-detail-item">
                             🏷️ ${log.tf_resource_type}
-                        </span>` : ''
-                    }
-                    ${log.tf_rpc ? 
-                        `<span class="log-detail-item">
+                        </span>
+                    ` : ''}
+                    ${log.tf_rpc ? `
+                        <span class="log-detail-item">
                             🔄 ${log.tf_rpc}
-                        </span>` : ''
-                    }
-                    ${log.module ? 
-                        `<span class="log-detail-item">
+                        </span>
+                    ` : ''}
+                    ${log.module ? `
+                        <span class="log-detail-item">
                             📦 ${log.module}
-                        </span>` : ''
-                    }
-                    ${log.tf_req_id && type !== 'chain' ? 
-                        `<span class="log-detail-item">
-                            🔗 ${log.tf_req_id.substring(0, 8)}...
-                        </span>` : ''
-                    }
+                        </span>
+                    ` : ''}
+                    ${log.tf_req_id && type !== 'chain' ? `
+                        <span class="log-detail-item">
+                            🔗 ${log.tf_req_id ? log.tf_req_id.substring(0, 8) + '...' : ''}
+                        </span>
+                    ` : ''}
                 </div>
+                
+                ${hasJson ? `
+                    <div class="quick-actions">
+                        <button class="quick-action-btn primary toggle-json" data-log-id="${log.id}">
+                            📄 Показать JSON
+                        </button>
+                        ${log.tf_req_id ? `
+                            <button class="quick-action-btn warning view-chain" data-req-id="${log.tf_req_id}">
+                                🔗 Вся цепочка
+                            </button>
+                        ` : ''}
+                        ${!log.is_read ? `
+                            <button class="quick-action-btn success mark-read" data-log-id="${log.id}">
+                                ✅ Отметить прочитанным
+                            </button>
+                        ` : ''}
+                        <button class="quick-action-btn" onclick="this.closest('.log-item').classList.toggle('compact')">
+                            📏 Компактно
+                        </button>
+                    </div>
+                    
+                    <div class="json-accordion" id="json-accordion-${log.id}" style="display: none;">
+                        <div class="json-accordion-header active" data-log-id="${log.id}">
+                            <span>📋 JSON данные</span>
+                            <span class="json-toggle">▼</span>
+                        </div>
+                        <div class="json-accordion-content active">
+                            ${jsonPreview}
+                        </div>
+                    </div>
+                ` : ''}
             </div>
         `;
     }
 
-    calculateChainDuration(logs) {
-        if (logs.length < 2) return '0ms';
-        const start = new Date(logs[0].timestamp);
-        const end = new Date(logs[logs.length - 1].timestamp);
-        const duration = end - start;
+    generateJsonPreview(jsonBlocks) {
+        let html = '';
         
-        if (duration < 1000) return `${duration}ms`;
-        return `${(duration / 1000).toFixed(2)}s`;
+        Object.entries(jsonBlocks).forEach(([key, value]) => {
+            if (value) {
+                html += `
+                    <div class="json-accordion">
+                        <div class="json-accordion-header">
+                            <span>${key}</span>
+                            <span class="json-toggle">▼</span>
+                        </div>
+                        <div class="json-accordion-content">
+                            <div class="compact-json">
+                                ${this.renderCompactJson(value)}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+        });
+        
+        return html;
     }
 
-    formatTimestampWithDifference(timestamp) {
-        const currentDate = new Date(timestamp);
-        const formattedTime = currentDate.toLocaleString('ru-RU', {
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
-        });
-
-        let differenceHtml = '';
-        if (this.lastTimestamp) {
-            const prevDate = new Date(this.lastTimestamp);
-            const diff = currentDate - prevDate;
-            
-            if (diff > 0) {
-                if (diff < 1000) {
-                    differenceHtml = `<span class="time-difference">+${diff}ms</span>`;
-                } else {
-                    differenceHtml = `<span class="time-difference">+${(diff / 1000).toFixed(2)}s</span>`;
-                }
+    renderCompactJson(data, level = 0) {
+        if (typeof data === 'string') {
+            try {
+                data = JSON.parse(data);
+            } catch (e) {
+                return `<div class="json-line"><span class="json-string">"${this.escapeHtml(data)}"</span></div>`;
             }
         }
-
-        this.lastTimestamp = timestamp;
-        return formattedTime + differenceHtml;
+        
+        if (typeof data !== 'object' || data === null) {
+            const type = typeof data;
+            const value = String(data);
+            return `<div class="json-line"><span class="json-${type}">${value}</span></div>`;
+        }
+        
+        if (Array.isArray(data)) {
+            if (data.length === 0) {
+                return '<div class="json-line">[]</div>';
+            }
+            
+            let html = '<div class="json-line">[</div>';
+            html += '<div class="json-nested">';
+            data.slice(0, 3).forEach((item, index) => {
+                html += this.renderCompactJson(item, level + 1);
+                if (index < data.length - 1 && index < 2) {
+                    html += '<div class="json-line">,</div>';
+                }
+            });
+            if (data.length > 3) {
+                html += `<div class="json-line">... и еще ${data.length - 3} элементов</div>`;
+            }
+            html += '</div>';
+            html += '<div class="json-line">]</div>';
+            return html;
+        }
+        
+        const keys = Object.keys(data);
+        if (keys.length === 0) {
+            return '<div class="json-line">{}</div>';
+        }
+        
+        let html = '<div class="json-line">{</div>';
+        html += '<div class="json-nested">';
+        keys.slice(0, 5).forEach((key, index) => {
+            html += `<div class="json-line"><span class="json-key">"${key}"</span>: ${this.renderCompactJson(data[key], level + 1)}</div>`;
+            if (index < keys.length - 1 && index < 4) {
+                html += '<div class="json-line">,</div>';
+            }
+        });
+        if (keys.length > 5) {
+            html += `<div class="json-line">... и еще ${keys.length - 5} свойств</div>`;
+        }
+        html += '</div>';
+        html += '<div class="json-line">}</div>';
+        return html;
     }
 
     attachLogActionsHandlers() {
@@ -469,6 +606,33 @@ class TerraViewer {
             });
         });
 
+        document.querySelectorAll('.toggle-json').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const logId = e.target.dataset.logId;
+                this.toggleJsonAccordion(logId);
+            });
+        });
+
+        document.querySelectorAll('.json-accordion-header').forEach(header => {
+            header.addEventListener('click', (e) => {
+                const content = header.nextElementSibling;
+                const isActive = header.classList.contains('active');
+                
+                header.parentElement.querySelectorAll('.json-accordion-header').forEach(h => {
+                    h.classList.remove('active');
+                });
+                header.parentElement.querySelectorAll('.json-accordion-content').forEach(c => {
+                    c.classList.remove('active');
+                });
+                
+                if (!isActive) {
+                    header.classList.add('active');
+                    content.classList.add('active');
+                }
+            });
+        });
+
         document.querySelectorAll('.chain-header').forEach(header => {
             header.addEventListener('click', (e) => {
                 if (!e.target.classList.contains('action-btn')) {
@@ -480,12 +644,21 @@ class TerraViewer {
 
         document.querySelectorAll('.log-item').forEach(item => {
             item.addEventListener('click', (e) => {
-                if (!e.target.classList.contains('action-btn')) {
+                if (!e.target.classList.contains('action-btn') && 
+                    !e.target.classList.contains('quick-action-btn') &&
+                    !e.target.classList.contains('json-accordion-header')) {
                     const logId = item.dataset.logId;
                     this.showLogDetails(logId);
                 }
             });
         });
+    }
+
+    toggleJsonAccordion(logId) {
+        const accordion = document.getElementById(`json-accordion-${logId}`);
+        if (accordion) {
+            accordion.style.display = accordion.style.display === 'none' ? 'block' : 'none';
+        }
     }
 
     async markAsRead(logId) {
@@ -509,6 +682,262 @@ class TerraViewer {
             console.error('Error marking as read:', error);
             this.showNotification('Ошибка при обновлении лога', 'error');
         }
+    }
+
+    async navigateChain(direction) {
+        if (!this.currentChainId) return;
+        
+        const chain = this.requestChains.get(this.currentChainId);
+        if (!chain) return;
+        
+        const sortedChain = chain.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        let newIndex = this.currentChainIndex + direction;
+        
+        if (newIndex >= 0 && newIndex < sortedChain.length) {
+            this.currentChainIndex = newIndex;
+            const log = sortedChain[newIndex];
+            this.showLogDetails(log.id, true);
+            this.highlightLogInList(log.id);
+        }
+    }
+
+    highlightLogInList(logId) {
+        document.querySelectorAll('.log-item').forEach(item => {
+            item.classList.remove('highlight');
+        });
+        
+        const logElement = document.querySelector(`[data-log-id="${logId}"]`);
+        if (logElement) {
+            logElement.classList.add('highlight');
+            logElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    }
+
+    showLogDetails(logId, fromNavigation = false) {
+        const log = this.currentLogs.find(l => l.id == logId);
+        if (!log) return;
+
+        const modal = document.getElementById('logDetailModal');
+        const content = document.getElementById('logDetailContent');
+        
+        let navigationHTML = '';
+        if (log.tf_req_id) {
+            const chain = this.requestChains.get(log.tf_req_id);
+            if (chain && chain.length > 1) {
+                const sortedChain = chain.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                const currentIndex = sortedChain.findIndex(l => l.id == logId);
+                this.currentChainIndex = currentIndex;
+                this.currentChainId = log.tf_req_id;
+                
+                navigationHTML = `
+                    <div class="chain-navigation">
+                        <button class="nav-btn prev-chain" ${currentIndex === 0 ? 'disabled' : ''}>
+                            ← Предыдущий
+                        </button>
+                        <span class="chain-position">
+                            ${currentIndex + 1} из ${sortedChain.length} в цепочке
+                        </span>
+                        <button class="nav-btn next-chain" ${currentIndex === sortedChain.length - 1 ? 'disabled' : ''}>
+                            Следующий →
+                        </button>
+                    </div>
+                    <div class="breadcrumbs">
+                        <span class="breadcrumb-item view-full-chain" data-req-id="${log.tf_req_id}">
+                            🔗 Вся цепочка запросов
+                        </span>
+                        <span class="breadcrumb-separator">|</span>
+                        <span class="breadcrumb-item" style="cursor: default;">
+                            ID: ${log.tf_req_id}
+                        </span>
+                    </div>
+                `;
+            }
+        }
+
+        const detailsHTML = `
+            ${navigationHTML}
+            <div class="log-detail-section">
+                <h4>Основная информация</h4>
+                <div class="quick-actions">
+                    ${!log.is_read ? `
+                        <button class="quick-action-btn success mark-read-modal" data-log-id="${log.id}">
+                            ✅ Отметить прочитанным
+                        </button>
+                    ` : ''}
+                    ${log.json_blocks && Object.keys(log.json_blocks).length > 0 ? `
+                        <button class="quick-action-btn primary toggle-all-json">
+                            📄 Развернуть все JSON
+                        </button>
+                    ` : ''}
+                </div>
+                <p><strong>Уровень:</strong> <span class="log-level ${log.level}">${log.level}</span></p>
+                <p><strong>Время:</strong> ${this.formatTimestamp(log.timestamp)}</p>
+                <p><strong>Сообщение:</strong> ${this.escapeHtml(log.message)}</p>
+                ${log.section ? `<p><strong>Секция:</strong> ${log.section}</p>` : ''}
+                ${log.module ? `<p><strong>Модуль:</strong> ${log.module}</p>` : ''}
+                ${log.tf_resource_type ? `<p><strong>Тип ресурса:</strong> ${log.tf_resource_type}</p>` : ''}
+                ${log.tf_rpc ? `<p><strong>RPC:</strong> ${log.tf_rpc}</p>` : ''}
+                ${log.tf_req_id ? `<p><strong>ID запроса:</strong> ${log.tf_req_id}</p>` : ''}
+            </div>
+            ${log.json_blocks && Object.keys(log.json_blocks).length > 0 ? `
+                <div class="log-detail-section">
+                    <h4>JSON блоки</h4>
+                    ${Object.entries(log.json_blocks).map(([key, value]) => 
+                        value ? `
+                            <div class="json-accordion">
+                                <div class="json-accordion-header active">
+                                    <span>${key}</span>
+                                    <span class="json-toggle">▼</span>
+                                </div>
+                                <div class="json-accordion-content active">
+                                    <div class="json-viewer">${this.renderJson(value)}</div>
+                                </div>
+                            </div>
+                        ` : ''
+                    ).join('')}
+                </div>
+            ` : ''}
+            ${log.raw_data ? `
+                <div class="log-detail-section">
+                    <h4>Исходные данные</h4>
+                    <div class="json-accordion">
+                        <div class="json-accordion-header">
+                            <span>Raw JSON data</span>
+                            <span class="json-toggle">▼</span>
+                        </div>
+                        <div class="json-accordion-content">
+                            <pre class="raw-data">${this.escapeHtml(log.raw_data)}</pre>
+                        </div>
+                    </div>
+                </div>
+            ` : ''}
+        `;
+        
+        content.innerHTML = detailsHTML;
+        modal.style.display = 'block';
+        
+        this.attachModalHandlers();
+        
+        if (!fromNavigation) {
+            this.highlightLogInList(logId);
+        }
+    }
+
+    attachModalHandlers() {
+        document.querySelector('.prev-chain')?.addEventListener('click', () => {
+            this.navigateChain(-1);
+        });
+
+        document.querySelector('.next-chain')?.addEventListener('click', () => {
+            this.navigateChain(1);
+        });
+
+        document.querySelector('.mark-read-modal')?.addEventListener('click', async (e) => {
+            const logId = e.target.dataset.logId;
+            await this.markAsRead(logId);
+            e.target.remove();
+        });
+
+        document.querySelector('.view-full-chain')?.addEventListener('click', async (e) => {
+            const reqId = e.target.dataset.reqId;
+            await this.showRequestChain(reqId);
+        });
+
+        document.querySelector('.toggle-all-json')?.addEventListener('click', (e) => {
+            const isExpanding = e.target.textContent.includes('Развернуть');
+            const headers = document.querySelectorAll('.json-accordion-header');
+            const contents = document.querySelectorAll('.json-accordion-content');
+            
+            headers.forEach(header => {
+                if (isExpanding) {
+                    header.classList.add('active');
+                } else {
+                    header.classList.remove('active');
+                }
+            });
+            
+            contents.forEach(content => {
+                if (isExpanding) {
+                    content.classList.add('active');
+                } else {
+                    content.classList.remove('active');
+                }
+            });
+            
+            e.target.textContent = isExpanding ? '📄 Свернуть все JSON' : '📄 Развернуть все JSON';
+        });
+
+        document.querySelectorAll('.json-accordion-header').forEach(header => {
+            header.addEventListener('click', () => {
+                const content = header.nextElementSibling;
+                header.classList.toggle('active');
+                content.classList.toggle('active');
+            });
+        });
+
+        this.attachJsonViewerHandlers();
+    }
+
+    attachJsonViewerHandlers() {
+        document.querySelectorAll('.json-toggle').forEach(toggle => {
+            toggle.addEventListener('click', function(e) {
+                e.stopPropagation();
+                const content = this.parentElement.querySelector('.json-content');
+                if (content.style.display === 'none') {
+                    content.style.display = 'block';
+                    this.textContent = '▼';
+                } else {
+                    content.style.display = 'none';
+                    this.textContent = '▶';
+                }
+            });
+        });
+
+        document.querySelectorAll('.json-content').forEach(content => {
+            content.style.display = 'none';
+        });
+    }
+
+    renderJson(data) {
+        if (typeof data === 'string') {
+            try {
+                data = JSON.parse(data);
+            } catch (e) {
+                return `<pre>${this.escapeHtml(data)}</pre>`;
+            }
+        }
+        
+        if (typeof data !== 'object' || data === null) {
+            return `<span class="json-value">${this.escapeHtml(String(data))}</span>`;
+        }
+        
+        if (Array.isArray(data)) {
+            return `
+                <div class="json-array">
+                    [<span class="json-toggle">▶</span>
+                    <div class="json-content">
+                        ${data.map(item => `
+                            <div class="json-item">
+                                ${this.renderJson(item)}
+                            </div>
+                        `).join('')}
+                    </div>]
+                </div>
+            `;
+        }
+        
+        return `
+            <div class="json-object">
+                {<span class="json-toggle">▶</span>
+                <div class="json-content">
+                    ${Object.entries(data).map(([key, value]) => `
+                        <div class="json-property">
+                            <span class="json-key">"${key}"</span>: ${this.renderJson(value)}
+                        </div>
+                    `).join('')}
+                </div>}
+            </div>
+        `;
     }
 
     async showRequestChain(reqId) {
@@ -571,6 +1000,7 @@ class TerraViewer {
                                     <span class="log-timestamp">${timestamp}</span>
                                 </div>
                                 <div class="log-message">${this.escapeHtml(log.message)}</div>
+                                ${log.section ? `<div class="log-details"><span class="log-detail-item section-badge section-${log.section}">🏗️ ${log.section}</span></div>` : ''}
                                 ${log.tf_rpc ? `<div class="log-details"><span class="log-detail-item">🔄 ${log.tf_rpc}</span></div>` : ''}
                             </div>
                         `;
@@ -617,6 +1047,7 @@ class TerraViewer {
                                 <span class="log-timestamp">${this.formatTimestamp(log.timestamp)}</span>
                             </div>
                             <div class="log-message">${this.escapeHtml(log.message)}</div>
+                            ${log.section ? `<div class="log-details"><span class="log-detail-item section-badge section-${log.section}">🏗️ ${log.section}</span></div>` : ''}
                         </div>
                     `).join('')}
                 </div>
@@ -629,8 +1060,13 @@ class TerraViewer {
 
     calculateChainStats(logs) {
         const levels = {};
+        const sections = {};
+        
         logs.forEach(log => {
             levels[log.level] = (levels[log.level] || 0) + 1;
+            if (log.section) {
+                sections[log.section] = (sections[log.section] || 0) + 1;
+            }
         });
 
         const start = new Date(logs[0].timestamp);
@@ -646,10 +1082,50 @@ class TerraViewer {
         return {
             total: logs.length,
             levels: levels,
+            sections: sections,
             duration: duration < 1000 ? `${duration}ms` : `${(duration / 1000).toFixed(2)}s`,
             timeRange: `${this.formatTimestamp(logs[0].timestamp)} - ${this.formatTimestamp(logs[logs.length - 1].timestamp)}`,
             avgInterval: avgInterval < 1000 ? `${avgInterval.toFixed(0)}ms` : `${(avgInterval / 1000).toFixed(2)}s`
         };
+    }
+
+    calculateChainDuration(logs) {
+        if (logs.length < 2) return '0ms';
+        const start = new Date(logs[0].timestamp);
+        const end = new Date(logs[logs.length - 1].timestamp);
+        const duration = end - start;
+        
+        if (duration < 1000) return `${duration}ms`;
+        return `${(duration / 1000).toFixed(2)}s`;
+    }
+
+    formatTimestampWithDifference(timestamp) {
+        const currentDate = new Date(timestamp);
+        const formattedTime = currentDate.toLocaleString('ru-RU', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        });
+
+        let differenceHtml = '';
+        if (this.lastTimestamp) {
+            const prevDate = new Date(this.lastTimestamp);
+            const diff = currentDate - prevDate;
+            
+            if (diff > 0) {
+                if (diff < 1000) {
+                    differenceHtml = `<span class="time-difference">+${diff}ms</span>`;
+                } else {
+                    differenceHtml = `<span class="time-difference">+${(diff / 1000).toFixed(2)}s</span>`;
+                }
+            }
+        }
+
+        this.lastTimestamp = timestamp;
+        return formattedTime + differenceHtml;
     }
 
     formatTimestampWithDifferenceForChain(timestamp, lastTimestamp) {
@@ -673,13 +1149,6 @@ class TerraViewer {
         return formattedTime + differenceHtml;
     }
 
-    showLogDetails(logId) {
-        const log = this.currentLogs.find(l => l.id == logId);
-        if (log) {
-            alert(`Детали лога:\n\nСообщение: ${log.message}\nУровень: ${log.level}\nВремя: ${this.formatTimestamp(log.timestamp)}\nРесурс: ${log.tf_resource_type || 'N/A'}\nRPC: ${log.tf_rpc || 'N/A'}`);
-        }
-    }
-
     async loadStats() {
         try {
             const response = await fetch(`${this.API_BASE}/stats`);
@@ -687,6 +1156,8 @@ class TerraViewer {
             if (response.ok) {
                 const stats = await response.json();
                 this.displayStats(stats);
+            } else {
+                console.error('Failed to load stats:', response.status);
             }
         } catch (error) {
             console.error('Error loading stats:', error);
@@ -699,8 +1170,8 @@ class TerraViewer {
     }
 
     displayStats(stats) {
-        document.getElementById('totalLogs').textContent = stats.total_logs;
-        document.getElementById('unreadLogs').textContent = stats.unread_logs;
+        document.getElementById('totalLogs').textContent = stats.total_logs || 0;
+        document.getElementById('unreadLogs').textContent = stats.unread_logs || 0;
         
         const levelStats = Object.entries(stats.level_stats || {})
             .map(([level, count]) => {
@@ -709,6 +1180,13 @@ class TerraViewer {
             })
             .join(', ');
         document.getElementById('levelStats').innerHTML = levelStats || '-';
+        
+        const sectionStats = Object.entries(stats.section_stats || {})
+            .map(([section, count]) => {
+                return `${section}: ${count}`;
+            })
+            .join(', ');
+        document.getElementById('sectionStats').textContent = sectionStats || '-';
     }
 
     getLevelColor(level) {
@@ -733,7 +1211,9 @@ class TerraViewer {
     }
 
     closeModal() {
-        document.getElementById('chainsModal').style.display = 'none';
+        document.querySelectorAll('.modal').forEach(modal => {
+            modal.style.display = 'none';
+        });
     }
 
     showNotification(message, type = 'info') {

@@ -8,13 +8,11 @@
 </head>
 <body>
     <div id="app">
-        <!-- Header -->
         <header class="header">
             <h1>🚀 TerraViewer</h1>
             <p>Анализатор логов Terraform в реальном времени</p>
         </header>
 
-        <!-- Controls -->
         <div class="controls">
             <div class="upload-section">
                 <input type="file" id="logFile" accept=".json,.log,.txt" style="display: none;">
@@ -31,6 +29,12 @@
                     <option value="info">Info</option>
                     <option value="debug">Debug</option>
                     <option value="trace">Trace</option>
+                </select>
+                <select id="sectionFilter" class="filter-select">
+                    <option value="">Все секции</option>
+                    <option value="plan">Plan</option>
+                    <option value="apply">Apply</option>
+                    <option value="validation">Validation</option>
                 </select>
                 <button id="refreshBtn" class="btn btn-secondary">🔄 Обновить</button>
                 <button id="advancedSearchBtn" class="btn btn-success">🎯 Расширенный поиск</button>
@@ -55,6 +59,15 @@
                     </select>
                 </div>
                 <div class="search-field">
+                    <label for="advancedSectionFilter">Секция:</label>
+                    <select id="advancedSectionFilter" class="filter-select">
+                        <option value="">Все секции</option>
+                        <option value="plan">Plan</option>
+                        <option value="apply">Apply</option>
+                        <option value="validation">Validation</option>
+                    </select>
+                </div>
+                <div class="search-field">
                     <label for="startDateFilter">С:</label>
                     <input type="datetime-local" id="startDateFilter" class="date-input">
                 </div>
@@ -73,7 +86,6 @@
             </div>
         </div>
 
-        <!-- Stats -->
         <div id="stats" class="stats">
             <div class="stat-item">
                 <span class="stat-label">Всего логов:</span>
@@ -87,9 +99,12 @@
                 <span class="stat-label">Уровни:</span>
                 <span id="levelStats" class="stat-value">-</span>
             </div>
+            <div class="stat-item">
+                <span class="stat-label">Секции:</span>
+                <span id="sectionStats" class="stat-value">-</span>
+            </div>
         </div>
 
-        <!-- Logs Container -->
         <div id="logsContainer" class="logs-container">
             <div id="loading" class="loading" style="display: none;">
                 <div class="spinner"></div>
@@ -104,7 +119,14 @@
             <div id="logsList" class="logs-list" style="display: none;"></div>
         </div>
 
-        <!-- Request Chains Modal -->
+        <div id="logDetailModal" class="modal">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <h3>Детали лога</h3>
+                <div id="logDetailContent"></div>
+            </div>
+        </div>
+
         <div id="chainsModal" class="modal">
             <div class="modal-content">
                 <span class="close">&times;</span>
